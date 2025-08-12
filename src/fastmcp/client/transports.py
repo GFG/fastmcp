@@ -830,12 +830,10 @@ class MCPConfigTransport(ClientTransport):
     """
 
     def __init__(self, config: MCPConfig | dict, name_as_prefix: bool = True):
-        from fastmcp.utilities.mcp_config import composite_server_from_mcp_config
-
         if isinstance(config, dict):
             config = MCPConfig.from_dict(config)
         self.config = config
-
+        self.underlying_transports: list[ClientTransport] = []
         # if there are no servers, raise an error
         if len(self.config.mcpServers) == 0:
             raise ValueError("No MCP servers defined in the config")
@@ -846,18 +844,27 @@ class MCPConfigTransport(ClientTransport):
 
         # otherwise create a composite client
         else:
-            self.transport = FastMCPTransport(
-                mcp=composite_server_from_mcp_config(
-                    self.config, name_as_prefix=name_as_prefix
+            composite_server = FastMCP[None]()
+            for name, mcp_server in self.config.mcpServers.items():
+                transport = mcp_server.to_transport()
+                self.underlying_transports.append(transport)
+                composite_server.mount(
+                    prefix=name if name_as_prefix else None,
+                    server=FastMCP.as_proxy(backend=transport),
                 )
-            )
-
+            self.transport = FastMCPTransport(mcp=composite_server)
     @contextlib.asynccontextmanager
     async def connect_session(
         self, **session_kwargs: Unpack[SessionKwargs]
     ) -> AsyncIterator[ClientSession]:
         async with self.transport.connect_session(**session_kwargs) as session:
             yield session
+
+    async def close(self):
+        """Close the underlying transport to ensure proper cleanup of subprocesses."""
+        await self.transport.close()
+        for transport in self.underlying_transports:
+            await transport.close()
 
     def __repr__(self) -> str:
         return f"<MCPConfigTransport(config='{self.config}')>"
