@@ -853,12 +853,16 @@ class MCPConfigTransport(ClientTransport):
                     server=FastMCP.as_proxy(backend=transport),
                 )
             self.transport = FastMCPTransport(mcp=composite_server)
+
     @contextlib.asynccontextmanager
     async def connect_session(
         self, **session_kwargs: Unpack[SessionKwargs]
     ) -> AsyncIterator[ClientSession]:
-        async with self.transport.connect_session(**session_kwargs) as session:
-            yield session
+        try:
+            async with self.transport.connect_session(**session_kwargs) as session:
+                yield session
+        finally:
+            await self.close()
 
     async def close(self):
         """Close the underlying transport to ensure proper cleanup of subprocesses."""
